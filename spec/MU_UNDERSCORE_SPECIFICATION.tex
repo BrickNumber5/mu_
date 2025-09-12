@@ -1,0 +1,494 @@
+\documentclass[twocolumn]{report}
+
+\usepackage[a4paper,includeheadfoot,margin=1.5cm]{geometry}
+\usepackage{minted}
+\usepackage[linkcolor=blue,urlcolor=blue,colorlinks=true]{hyperref}
+\usepackage[skip=10pt plus 1pt,indent=0pt]{parskip}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\usepackage{fontawesome5}
+
+\usepackage{fontspec}
+\setmainfont[Ligatures=TeX,Scale=0.9]{Noto Sans}
+\setmonofont[Scale=0.8]{Fira Code}
+
+\setminted{escapeinside=@@}
+
+\newcommand\muu{\texttt{μ\!\!\!\_\_}}
+\newcommand\rev{\texttt{r0.1} }
+\newcommand{\intralink}[2]{\hyperref[#1]{\ref*{#1} #2}}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhf[FL]{The \muu\ Specification \copyright\ 2025 by Brielle Hoff is licensed under \href{https://creativecommons.org/licenses/by-nc/4.0/}{CC BY-NC 4.0 \faCreativeCommons\faCreativeCommonsBy\faCreativeCommonsNc}}
+\fancyhf[FR]{\thepage}
+\setlength{\headheight}{0pt}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancypagestyleassign{plain}{fancy}
+
+\setcounter{secnumdepth}{3}
+\renewcommand{\thesection}{\arabic{section}}
+\renewcommand{\thefootnote}{[\arabic{footnote}]}
+
+\begin{document}
+
+\title{The \muu\ Specification --- \rev}
+
+\makeatletter\chapter*{\@title}\makeatother
+\label{ch:main}
+
+\section*{Preface}
+\label{sec:preface}
+
+mu\_ (stylized \muu) is an extremely simple programming language.
+This document contains a complete specification of the language followed by a series of appendicies elucidating motivation, design decisions, implementation strategies, and so on.
+These appendices are not part of the formal language specification and in the event of a conflict between the specification and the content of an appendix the specification is authoritative.
+
+This is revision \rev of the specification.
+
+\section{Source}
+\label{sec:source}
+
+\subsection{Encoding}
+\label{subsec:encoding}
+
+A mu\_ program (recommended extensions \texttt{.mu\_}, \texttt{.muu}) consists of a series of bytes.
+The behaviors of bytes with the high bit set is implementation defined.
+As a consequence a conforming implementation MAY choose to interpret mu\_ code as text in ASCII, UTF-8, or another similar encoding.
+This document will adopt such an interpretation when displaying mu\_ source.
+
+\subsection{Syntax}
+\label{subsec:syntax}
+
+\subsubsection{Grammar}
+\label{subsubsec:grammar}
+
+\begin{minted}{bnf}
+<program>  ::= <ws> <expr> <ws>
+
+<expr>     ::= <atom> | <list>
+
+<atom>     ::= <ordinary> { <ordinary> }
+
+<list>     ::= <lparen>
+               { <ws> <expr> }
+               [ <ws> <dot> <ws> <expr> ] <ws>
+               <rparen>
+
+<ws>       ::= { <tab> | <lf> | <cr> | <sp> }
+
+<lparen>   ::= 0x28 ;; LEFT PARENTHESIS  '('
+<rparen>   ::= 0x29 ;; RIGHT PARENTHESIS ')'
+<dot>      ::= 0x2e ;; FULL STOP         '.'
+
+<tab>      ::= 0x09 ;; HORIZONTAL TAB    '\t'
+<lf>       ::= 0x0a ;; LINE FEED         '\n'
+<cr>       ::= 0x0d ;; CARRIAGE RETURN   '\r'
+<sp>       ::= 0x20 ;; SPACE             ' '
+
+<ordinary> ::= <any> - <special>
+
+<any>      ::= 0x20-0x7e ;; ALL PRINTABLE ASCII
+<special>  ::= <lparen> | <rparen> | <dot>
+             | <tab> | <lf> | <cr> | <sp>
+\end{minted}
+
+\subsubsection{Interpretation}
+\label{subsubsec:interpretation}
+
+Each distinct \mintinline{bnf}{<atom>} in the source is an \emph{atom name}, a sequence of bytes, and is given a distinct positive \emph{atom number}.\footnote{See \intralink{subsec:atoms}{Atoms}.}\footnote{See TODO \intralink{appendix:implementation_strategies}{Implementation Strategies}.}
+How different byte sequences are mapped to numbers is completely implementation defined with the only restrictions being that:
+
+\begin{itemize}
+\item Atom numbers are between $1$ and $2^{31} - 1$.
+\item Two atoms with the same name within the same execution of a program get the same atom number.
+\item Two atoms with different names within the same execution of a program get different atom numbers.
+\end{itemize}
+
+For example, all instances of the atom with name \mintinline{text}{hello} (hex \mintinline{text}{68 65 6c 6c 6f}) are to be assigned the same atom number (say, $3$) which must be different from the atom number for \mintinline{text}{world} (hex \mintinline{text}{77 6f 72 6c 64}) (say, $7$) but what exactly the atom numbers are can vary between implementations, programs, or even different executions of the same program at the implementer's discretion.
+
+An implementation MAY assume that there are no more than $2^{11} - 1$ distinct atom names referred to in a given source text, that each atom name has a length of at most $2^7 - 1$ bytes, and that the combined length of these names (excluding duplicates) is no more than $2^{15} - 2^{11}$ bytes.\footnote{These restrictions permit an implementation to allocate its atom names into a singular region of memory of size i32::MAX separated by NULLs, for instance.}
+
+\clearpage
+
+A list in the source code is constructed of cons cells\footnote{See \intralink{subsec:cons_cells}{Cons Cells}.} according to the following algorithm:
+
+\begin{minted}{py}
+def parse_list(tokens):
+    @\textrm{\textit{eat a lparen from}}@ tokens
+    list = parse_list_inner(tokens)
+    @\textrm{\textit{eat a rparen from}}@ tokens
+    return list
+
+def parse_list_inner(tokens):
+    if ( @\textrm{\textit{the next token in}}@ tokens @\textrm{\textit{is dot}}@ ):
+        @\textrm{\textit{eat a dot from}}@ tokens
+        return @\textrm{\textit{parse an expression from}}@ tokens
+    elif ( @\textrm{\textit{the next token in}}@ tokens @\textrm{\textit{is rparen}}@ ):
+        return @\textrm{\textit{the $0$ atom}}@
+    else:
+        head = @\textrm{\textit{parse an expression from}}@ tokens
+        tail = parse_list_inner(tokens)
+        return @\textrm{\textit{a new cons cell of}}@ head @\textrm{\textit{and}}@ tail
+\end{minted}
+
+A few things to note about this algorithm:
+
+\begin{itemize}
+\item \mintinline{lisp}{()} becomes the $0$ atom.
+For this reason the $0$ atom is also called nil and is usually denoted \mintinline{lisp}{()}.
+\item A list like \mintinline{lisp}{(@$i_1$@ @$i_2$@ @$i_3$@)} denotes an ordinary linked list $i_1 \rightarrow i_2 \rightarrow i_3 \rightarrow \textbf{NIL}$.
+\item A dotted pair like \mintinline{lisp}{(@$l$@ . @$r$@)} denotes a simple cons cell $\left(l, r\right)$.
+\item An ordinary list like \mintinline{lisp}{(@$i_1$@ @$i_2$@ @$i_3$@ @$\cdots$@ @$i_n$@)} is equivalent to the dotted \mintinline{lisp}{(@$i_1$@ . (@$i_2$@ . (@$i_3$@ . (@$\cdots$@ (@$i_n$@ . ())))))}.
+\end{itemize}
+
+\section{Types}
+\label{sec:types}
+
+\muu \ is dynamically typed with exactly two types: atoms and cons cells.
+
+\subsection{Atoms}
+\label{subsec:atoms}
+
+An atom is fundamentally an \emph{unsigned $31$ bit integer}.\footnote{See \intralink{appendix:implementation_strategies}{Implementation Strategies} for a rational for this unusual choice.}
+
+The $0$ atom represents the empty list in list-related contexts.
+
+Some positive atoms correspond to particular byte sequences (atom names) in the source code.\footnote{See \intralink{subsubsec:interpretation}{Interpretation}.}
+Not all atom values have a corresponding name nor is there a standard mechanism for converting between atoms and names during the execution of a program. This correspondence is simply a mechanism to allow source code to provide human-readable names to arbitrary symbols rather than a property of the language's runtime.
+
+\subsection{Cons Cells}
+\label{subsec:cons_cells}
+
+A cons cell is simply an ordered pair of items (each of which may be either an atom or another cons cell).
+
+The first item in the pair is called the \emph{head} and the second is called the \emph{tail}.
+
+A list refers to a particular structure formed of either the $0$ atom or a cons cell whose tail is itself a list.\footnote{See \intralink{subsubsec:interpretation}{Interpretation} for how these are denoted.}
+
+\section{Environments}
+\label{sec:environments}
+
+At the core of \muu's scoping rules is the environment, a mapping from atoms to arbitrary values. This mapping is defined as a list of pairs of positive atoms and values. The first element in each pair is a variable to bind and the second is an value to bind to that variable.
+
+For example:
+\begin{minted}{lisp}
+( (hello . hello)
+  (somelist . (a b c))
+  (a_variable . a_value) )
+\end{minted}
+is an environment mapping the atom \mintinline{lisp}{hello} to itself, the atom \mintinline{lisp}{somelist} to the list \mintinline{lisp}{(a b c)}, and the atom \mintinline{lisp}{a_variable} to the atom \mintinline{lisp}{a_value}.
+
+An environment may contain multiple bindings for the same atom in which case the earlier binding \emph{shadows} the later one, effectively overriding it\footnote{The shadowed binding is still accessible via \mintinline{lisp}{~~env}, though.}.
+
+\mintinline{lisp}{()} is a legal environment containing no mappings.
+
+\subsection{Lookup}
+\label{subsec:lookup}
+
+Looking up the value corresponding to an atom in an environment is defined according to the following algorithm:
+\begin{minted}{py}
+def lookup(sym, env):
+    if ( env @\textrm{\textit{is empty}}@ ):
+        return sym
+    else:
+        binding = @\textrm{\textit{the head of}}@ env
+        if ( @\textrm{\textit{the head of}}@ binding @\textrm{\textit{is}}@ sym):
+            return @\textrm{\textit{the tail of}}@ binding
+        else:
+            return lookup(sym, @\textrm{\textit{the tail of}}@ env)
+\end{minted}
+
+Note that duplicate bindings are resolved in favor of the first, and missing bindings resolve to themselves.
+
+\section{Pattern Matching}
+\label{sec:pattern_matching}
+
+A pattern is a value which can be matched against another value (called the scrutinee) in some base environment to produce a new environment which contains everything in the base environment in addition to new bindings representing components of the value.
+
+Every value which does not contain duplicate positive atoms is a valid pattern.
+
+Matching a pattern against a value follows the following rules:
+\begin{itemize}
+\item \mintinline{lisp}{()} matches the value \mintinline{lisp}{()} and introduces no bindings.
+Attempting to match this pattern against any other object is undefined behavior.\footnote{See \intralink{sec:undefined_behavior}{Undefined Behavior}.}
+\item A positive atom matches any value and introduces a binding from the pattern atom to the value.
+\item A cons cell matches a cons cell value, recursively pattern matching the value's head and tail against its head and tail.
+The order in which the bindings from the head and tail are included in the final environment is implementation defined and may even be non-deterministic.
+Attempting to match a cons cell pattern against any other object is undefined behavior.
+\item Introduced bindings shadow bindings in the base environment (i.e. are placed before) but do not remove them.
+This allows careful environment manipulation to recover the base environment which is necessary for writing fully hygienic macros.
+\end{itemize}
+
+\subsection{Examples}
+\label{subsec:pattern_matching_examples}
+
+\begin{itemize}
+\item Matching the expression \mintinline{lisp}{()} against the pattern \mintinline{lisp}{()} in the base environment \mintinline{lisp}{((a . b))} produces the environment \mintinline{lisp}{((a . b))}.
+\item Matching the expression \mintinline{lisp}{(a b c d)} against the pattern \mintinline{lisp}{(x y . z)} in the base environment \mintinline{lisp}{()} produces some permutation of the environment \mintinline{lisp}{((x . a) (y . b) (z . (c d)))}
+\item Matching the expression \mintinline{lisp}{(a b c)} against the pattern \mintinline{lisp}{(x y)} is undefined behavior.
+\item Matching the expression \mintinline{lisp}{(a b)} against the pattern \mintinline{lisp}{(x y)} in the base environment \mintinline{lisp}{((x . xx))} may produce either the environment \mintinline{lisp}{((x . a) (y . b) (x . xx))} or \mintinline{lisp}{((y . b) (x . a) (x . xx))} but MUST NOT produce the environment \mintinline{lisp}{((x . a) (y . b))}.
+\end{itemize}
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+The heart of the language is evaluation.
+In fact, executing a program simply consists of parsing it then evaluating it in an empty environment.
+
+An \emph{expression} is any value to be evaluated.
+
+Evaluation takes place in an environment $e$.\footnote{See \intralink{sec:environments}{Environments}.}
+
+Evaluating an expression behaves differently depending on whether the expression is the $0$ atom, a positive atom, or a non-empty list.
+
+\subsection{Zero Atom}
+\label{sec:eval_zero_atom}
+
+The $0$ atom \mintinline{lisp}{()} evaluates to itself.
+
+\subsection{Positive Atoms}
+\label{sec:eval_positive_atom}
+
+A positive atom $a$ evaluates to \mintinline{py}{lookup(@$a$@, @$e$@)}.\footnote{See \intralink{subsec:lookup}{Lookup} for the definition of \mintinline{py}{lookup()}.}
+
+\subsection{Lists}
+\label{sec:eval_list}
+
+If a cons cell is evaluated it should be a valid list.
+An implementation MAY reject attempting to evaluate a non-list cons cell or MAY try to interpret such an expression cohesively.
+
+A list is evaluated as a call by first evaluating its head and then, based on the result (referred to as the \emph{receiver}), performing an operation on the remaining elements.
+
+We will use the meta syntax of angle brackets $\left\langle expr \right\rangle_{env}$ to denote an expression which evaluates to $expr$ in the environment $env$ and the syntax of an arrow with environment above ($\xrightarrow{env}$) to denote the evaluation of an expression to a value in an environment.
+
+\subsubsection{Builtins}
+\label{subsubsec:eval_builtin}
+
+If the receiver is an atom it should belong to the following list of atoms with builtin behavior.
+Notice that with the exception of \mintinline{lisp}{()} which has no corresponding name these builtin receivers all have names starting \mintinline{lisp}{~~} (hex \mintinline{text}{7e 7e}).
+
+\begin{description}[leftmargin=1.5cm,labelwidth=1.3cm]
+\item [\mintinline{lisp}{()}]
+Called ``quote'', but represented by the $0$ atom for technical reasons.\footnote{Using the $0$ atom as the quote builtin macro ensures that the quote macro is always accessible as the $0$ atom is the only atom which cannot be rebound. This, in turn, ensures that any value is always accessible by invoking quote. The ability to access arbitrary content reliably regardless of environment is critical for hygienic macros to be possible.}
+Evaluates to its first argument \emph{unevaluated}. \\
+\\
+\mintinline{lisp}{(@$\langle$@()@$\rangle_{e}$@ @$i$@)} $\xrightarrow{e}$ $i$
+
+\item [\mintinline{lisp}{~~true}]
+Takes two arguments and tail evaluates\footnote{See \intralink{sec:required_optimizations}{Required Optimizations}.} to its first argument. DOES NOT evaluate its second argument. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~true@$\rangle_{e}$@ @$\langle t \rangle_{e}$@ @$fe$@)} $\xrightarrow{e}$ $t$
+
+\item [\mintinline{lisp}{~~false}]
+Takes two arguments and tail evaluates to its second argument. DOES NOT evaluate its first argument. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~false@$\rangle_{e}$@ @$te$@ @$\langle f \rangle_{e}$@)} $\xrightarrow{e}$ $f$
+
+\item [\mintinline{lisp}{~~head}]
+Takes an argument and evaluates it.
+The result should be a cons cell.
+Returns the head of that cons cell. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~head@$\rangle_{e}$@ @$\langle$@(@$h$@ . @$t$@)@$\rangle_{e}$@)} $\xrightarrow{e}$ $h$
+
+\item [\mintinline{lisp}{~~tail}]
+Takes an argument and evaluates it.
+The result should be a cons cell.
+Returns the tail of that cons cell. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~tail@$\rangle_{e}$@ @$\langle$@(@$h$@ . @$t$@)@$\rangle_{e}$@)} $\xrightarrow{e}$ $t$
+
+\item [\mintinline{lisp}{~~cons}]
+Takes two arguments, evaluates them, and returns a new cons cell constructed from the first and second arguments. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~cons@$\rangle_{e}$@ @$\langle h \rangle_{e}$@ @$\langle t \rangle_{e}$@)} $\xrightarrow{e}$ \mintinline{lisp}{(@$h$@ . @$t$@)}
+
+\item [\mintinline{lisp}{~~lte}]
+Takes two arguments and evaluates them.
+Returns \mintinline{lisp}{~~true} if the first is less than or equal to the second and \mintinline{lisp}{~~false} otherwise.
+Atoms are compared according to their numbers.
+Cons cells are always less than atoms.
+Two distinguishable cons cells do not compare equal.
+Two indistinguishable cons cells may or may not compare equal. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~lte@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} \left\{\begin{matrix} \ \text{\mintinline{lisp}{~~true}} & \textrm{if } a \leqslant b \\ \ \text{\mintinline{lisp}{~~false}} & \textrm{otherwise} \end{matrix}\right.$
+
+\item [\mintinline{lisp}{~~eq}]
+Takes two arguments, evaluates them, and returns \mintinline{lisp}{~~true} if the first is equal to the second and \mintinline{lisp}{~~false} otherwise.
+Atoms are compared according to their numbers.
+Cons cells are always less than atoms.
+Two distinguishable cons cells do not compare equal.
+Two indistinguishable cons cells may or may not compare equal. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~eq@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} \left\{\begin{matrix} \ \text{\mintinline{lisp}{~~true}} & \textrm{if } a = b \\ \ \text{\mintinline{lisp}{~~false}} & \textrm{otherwise} \end{matrix}\right.$
+
+\item [\mintinline{lisp}{~~add}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+Returns the sum of the two atoms modulo $2^{31}$. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~add@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a + b)$ mod $2^{31}$
+
+\item [\mintinline{lisp}{~~sub}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+Returns the difference of the two atoms modulo $2^{31}$. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~sub@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a - b)$ mod $2^{31}$
+
+\item [\mintinline{lisp}{~~and}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+Returns the bitwise conjunction (bitwise and) of the two atoms \\
+\\
+\mintinline{lisp}{(@$\langle$@~~and@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a \land b)$
+
+\item [\mintinline{lisp}{~~or}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+Returns the bitwise disjunction (bitwise or) of the two atoms \\
+\\
+\mintinline{lisp}{(@$\langle$@~~or@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a \lor b)$
+
+\item [\mintinline{lisp}{~~not}]
+Takes one argument and evaluates it.
+It should be an atom.
+Returns the bitwise negation (bitwise not) of the atom \\
+\\
+\mintinline{lisp}{(@$\langle$@~~not@$\rangle_{e}$@ @$\langle a \rangle_{e}$@)} $\xrightarrow{e} (\neg a)$
+
+\item [\mintinline{lisp}{~~sl}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+The second argument should be less than $31$.
+Returns the first shifted left by the second number of bits. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~sl@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a << b)$
+
+\item [\mintinline{lisp}{~~sr}]
+Takes two arguments and evaluates them.
+They should both be atoms.
+The second argument should be less than $31$.
+Returns the first shifted right by the second number of bits. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~sr@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a >> b)$
+
+\item [\mintinline{lisp}{~~env}]
+Takes no arguments.
+Returns the environment. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~env@$\rangle_{e}$@)} $\xrightarrow{e} e$
+
+\item [\mintinline{lisp}{~~sys}]
+Takes two arguments.
+DOES NOT evaluate them.
+Based on the value of the first argument perform a different implementation defined operation on the second argument.
+See \intralink{subsubsec:system_builtin}{The \mintinline{lisp}{~~sys} Builtin} for a complete definition. \\
+\\
+\mintinline{lisp}{(@$\langle$@~~sys@$\rangle_{e}$@ @$sym$@ @$arg$@)} $\xrightarrow{e}$ See \intralink{subsubsec:system_builtin}{}
+\end{description}
+
+Each builtin takes a fixed number of arguments.
+Providing the wrong number of arguments to a builtin is undefined behavior.\footnote{See \intralink{sec:undefined_behavior}{Undefined Behavior}.}
+
+Attempting to use any atom that is not on this list of receivers is undefined behavior as is passing an argument of (or that evaluates to, where relevant) a type other than that expected.
+
+\subsubsection{User Defined Receivers}
+\label{subsubsec:user_defined_recievers}
+
+If the receiver is a list then it represents a user-defined macro or function and should have exactly $2$ or $3$ elements, respectively.
+
+The first of these elements is a pattern\footnote{See \intralink{sec:pattern_matching}{Pattern Matching}.} and the second is the body.
+The third element has two purposes:
+\begin{enumerate}
+\item Its presence indicates that this receiver is a function rather than a macro.
+\item It defines an environment to use when expanding the function body.
+Combined with the \mintinline{lisp}{~~env} builtin, this allows lexical scoping of functions, scoped evaluation as a derived object, and more.\footnote{See TODO.}
+\end{enumerate}
+
+To evaluate a call involving a user-defined receiver preform the following steps:
+\begin{enumerate}
+\item If the receiver is a function, evaluate all of its arguments, otherwise, leave them unevaluated.
+\item Match the list of arguments against the included pattern to produce a new environment.\footnote{See \intralink{sec:pattern_matching}{Pattern Matching} for the definition of this operation.}
+\begin{itemize}
+\item If the receiver is a function, use the included environment as the base when constructing the new environment.
+\item Otherwise, use the calling environment as the base when constructing the new environment.
+\end{itemize}
+\item Tail evaluate\footnote{See \intralink{sec:required_optimizations}{Required Optimizations}.} the included body in the constructed environment.
+\end{enumerate}
+
+Attempting to use any cons-cell which does not form a valid list of either exactly two or three elements where the first element is a valid pattern and the third (if present) is a valid environment as a receiver is undefined behavior.\footnote{See \intralink{sec:undefined_behavior}{Undefined Behavior}.}
+
+\subsubsection{The \mintinline{lisp}{~~sys} Builtin}
+\label{subsubsec:system_builtin}
+
+\mintinline{lisp}{~~sys} is the main point of extensibility built into \muu.
+
+Calling the \mintinline{lisp}{~~sys} with two $0$ atoms, e.g. \mintinline{lisp}{((() ~~sys) () ())}, should return a list of pairs mapping \emph{system operation names} to \emph{system operation codes}.\footnote{For a system which does not provide implementation specific functionality through this mechanism just return \mintinline{lisp}{()}.}
+This mapping should remain constant throughout a program's lifetime.
+
+The heads of these pairs, the \emph{system operation names}, are atoms which correspond to human readable names of a sort a programmer may write in their source code.
+The tails, meanwhile, the \emph{system operation codes}, should also be atoms but which need not be human readable names.
+
+In order to call a system operation, the system operation code is used as the first argument to \mintinline{lisp}{~~sys} and the desired argument is used as the second argument.
+The code, argument, and calling environment are then handled in some implementation-specific way.
+Neither the code nor argument is evaluated prior to calling, but the system operation has all the information it needs to evaluate the argument if it wishes to.
+
+Using both a readable name and a code and delegating the mapping to the user's program this way allows for an extremely simple implementation of \mintinline{lisp}{~~sys} using a jump table or similar structure while still allowing readable names to be used to refer to these operations.
+
+\section{Required Optimizations}
+\label{sec:required_optimizations}
+
+Several points in \intralink{sec:evaluation}{Evaluation} specify to tail evaluate some expression.
+In such cases implementations MUST perform proper tail-call optimization.
+This means that evaluating an expression which causes a tail evaluation of another expression which itself causes the tail evaluation of another expression and so on should only take up $O(1)$ space for storage of the current evaluation state (e.g. call stack).
+This optimization is necessary to ensure programmers can write loops without fear of running out of space.
+
+Implementations must not needlessly duplicate cons cells.
+Acquiring a cons cell from a binding multiple times should not require additional space for each instance.
+
+Implementations must have a garbage collector.
+Concretely, repeatedly creating and then no longer using cons cells should not cause memory expenditure to grow without bound.
+
+\intralink{appendix:tests}{Tests} offers a list of test cases which, in addition to testing correctness of an implementation, test that these characteristics are met appropriately.
+
+\section{Undefined Behavior}
+\label{sec:undefined_behavior}
+
+Several points throughout this specification refer to certain occurrences as undefined behavior.
+Implementations are free to adopt arbitrary behavior in these instances including but not limited to:
+
+\begin{itemize}
+\item Extending the specification behavior
+\item Producing some kind of error
+\item Producing a nonsense result
+\item Halting and catching fire
+\end{itemize}
+
+
+
+\appendix
+
+\chapter{Background}
+\label{appendix:background}
+
+\chapter{Implementation Strategies}
+\label{appendix:implementation_strategies}
+
+\chapter{Derivation of Higher-Level Functionality}
+\label{appendix:higher_level_derivation}
+
+\chapter{Reference Implementation (WebAssembly)}
+\label{appendix:reference_implementation_wasm}
+
+\chapter{Tests}
+\label{appendix:tests}
+
+
+
+\end{document}
