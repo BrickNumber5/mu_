@@ -17,7 +17,7 @@
 \setminted{escapeinside=@@}
 
 \newcommand\muu{\texttt{μ\!\!\!\_\_}}
-\newcommand\rev{\texttt{r0.1} }
+\newcommand\rev{\texttt{r0.2} }
 \newcommand{\intralink}[2]{\hyperref[#1]{\ref*{#1} #2}}
 
 \usepackage{fancyhdr}
@@ -473,6 +473,7 @@ Implementations are free to adopt arbitrary behavior in these instances includin
 
 
 \appendix
+\renewcommand{\thesection}{\thechapter.\arabic{section}}
 
 \chapter{Background}
 \label{appendix:background}
@@ -485,6 +486,24 @@ Implementations are free to adopt arbitrary behavior in these instances includin
 
 \chapter{Reference Implementation (WebAssembly)}
 \label{appendix:reference_implementation_wasm}
+
+This appendix contains a reference implementation of a \muu\ interpreter written
+in WebAssembly and the Javascript bindings necessary to embed it on the Web or
+in Deno.
+
+While the full source code of these files is included in this appendix for
+completeness, a reader interested in acquiring copies can much more easily
+obtain them from the \mintinline{text}{reference-implementation} directory of
+the \muu\ project's git repository in clean, plain text.
+
+\section{WebAssembly Text --- \mintinline{text}{mu_.wat}}
+% short of writing our own wat lexer which can properly handle return_call and
+% memory.copy, which we should probably do, ignorelexererrors at least
+% suppresses the harsh red boxes.
+\inputminted[fontsize=\fontsize{6.5pt}{6.5pt},ignorelexererrors=true]{wat}{../reference-implementation/mu_.wat}
+
+\section{Javascript Bindings --- \mintinline{text}{mu_.mjs}}
+\inputminted[fontsize=\fontsize{6.5pt}{6.5pt}]{javascript}{../reference-implementation/mu_.mjs}
 
 \chapter{Tests}
 \label{appendix:tests}
