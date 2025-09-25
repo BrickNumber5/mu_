@@ -1,0 +1,6 @@
+# Build Artifacts
+*.wasm
+*.aux
+*.log
+*.out
+_minted
