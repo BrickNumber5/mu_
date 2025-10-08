@@ -5,7 +5,7 @@
 ;; and as a template for ports to other assembly and programming languages.
 ;; See `mu_.mjs` for Javascript bindings
 ;;
-;; This is version `r0.2i1` which implements `r0.2` of the mu_ specification.
+;; This is version `r0.3i1` which implements `r0.3` of the mu_ specification.
 ;;
 ;; To compile, run: `wat2wasm --enable-multi-memory --enable-tail-call mu_.wat`
 ;;
@@ -225,7 +225,7 @@
         "~~lte...~~eq...."
         "~~add...~~sub..."
         "~~and...~~or....~~not..."
-        "~~sl....~~sr...."
+        "~~shl...~~shr..."
         "~~env...~~sys...")
     (global $stringyard_top (mut i32) (i32.const 128))
 
@@ -330,8 +330,8 @@
         "\48\00\00\00" "\05\00" "\00\00" ;; ~~and   (5)
         "\50\00\00\00" "\04\00" "\00\00" ;; ~~or    (4)
         "\58\00\00\00" "\05\00" "\00\00" ;; ~~not   (5)
-        "\60\00\00\00" "\04\00" "\00\00" ;; ~~sl    (4)
-        "\68\00\00\00" "\04\00" "\00\00" ;; ~~sr    (4)
+        "\60\00\00\00" "\05\00" "\00\00" ;; ~~shl   (5)
+        "\68\00\00\00" "\05\00" "\00\00" ;; ~~shr   (5)
         "\70\00\00\00" "\05\00" "\00\00" ;; ~~env   (5)
         "\78\00\00\00" "\05\00" "\00\00" ;; ~~sys   (5)
     )
@@ -743,12 +743,11 @@
         $eval_builtin_and
         $eval_builtin_or
         $eval_builtin_not
-        $eval_builtin_sl
-        $eval_builtin_sr
+        $eval_builtin_shl
+        $eval_builtin_shr
         $eval_builtin_env
         $eval_builtin_sys
     )
-    (elem (i32.const 32) $system_operation_zero)
 
     (type $invokable (func
         (param $arguments i32)
@@ -811,27 +810,27 @@
                 call $eval
                 local.set $receiver
 
-                ;; Load the arguments
-                local.get $expression
-                call $tail
-
-                ;; Load the environment
-                local.get $environment
-
-                ;; Load the garbage collection anchor
-                local.get $gc_anchor
-
-                ;; Load the receiver
-                local.get $receiver
-
                 ;; Check whether the receiver is an atom
                 local.get $receiver
                 i32.const 0
                 i32.ge_s
-                (if (param i32) (param i32) (param i32) (param i32) (result i32)
+                (if (result i32)
                     (then
                         ;; The receiver is an atom, this is a builtin call
                         ;; Look up the builtin in the table of builtins
+
+                        ;; Load the arguments
+                        local.get $expression
+                        call $tail
+
+                        ;; Load the environment
+                        local.get $environment
+
+                        ;; Load the garbage collection anchor
+                        local.get $gc_anchor
+
+                        ;; Load the receiver
+                        local.get $receiver
 
                         ;; Zero out bit 29
                         i32.const 0xDF_FF_FF_FF
@@ -847,8 +846,53 @@
                         return_call_indirect (type $invokable)
                     )
                     (else
-                        ;; Run the user defined receiver handling
-                        return_call $eval_invoke_user_defined
+                        ;; The receiver is a cons cell, it is either a system
+                        ;; defined receiver (if its tail is ~~sys) or a user
+                        ;; defined receiver otherwise
+                        local.get $receiver
+                        call $tail
+                        i32.const 0x20_00_00_80 ;; ~~sys
+                        i32.eq
+                        (if (result i32)
+                            (then
+                                ;; Run the system defined receiver handler
+
+                                ;; Load the arguments
+                                local.get $expression
+                                call $tail
+
+                                ;; Load the environment
+                                local.get $environment
+
+                                ;; Dynamically dispatch
+                                local.get $receiver
+                                call $head
+                                i32.const 32
+                                i32.add
+                                call_indirect (type $system_operation_handler)
+
+                                ;; Run garbage collection
+                                local.get $gc_anchor
+                                call $gc_collect
+                            )
+                            (else
+                                ;; Load the arguments
+                                local.get $expression
+                                call $tail
+
+                                ;; Load the environment
+                                local.get $environment
+
+                                ;; Load the garbage collection anchor
+                                local.get $gc_anchor
+
+                                ;; Load the receiver
+                                local.get $receiver
+
+                                ;; Run the user defined receiver handling
+                                return_call $eval_invoke_user_defined
+                            )
+                        )
                     )
                 )
             )
@@ -1327,8 +1371,8 @@
         call $gc_collect
     )
 
-    ;; Evaluate an invocation of the ~~sl builtin
-    (func $eval_builtin_sl
+    ;; Evaluate an invocation of the ~~shl builtin
+    (func $eval_builtin_shl
         (param $arguments i32)
         (param $environment i32)
         (param $gc_anchor i32)
@@ -1363,8 +1407,8 @@
         call $gc_collect
     )
 
-    ;; Evaluate an invocation of the ~~sr builtin
-    (func $eval_builtin_sr
+    ;; Evaluate an invocation of the ~~shr builtin
+    (func $eval_builtin_shr
         (param $arguments i32)
         (param $environment i32)
         (param $gc_anchor i32)
@@ -1416,19 +1460,31 @@
         (param $environment i32)
         (param $gc_anchor i32)
         (result i32)
+        (local $code i32)
 
-        ;; Get the argument (argument 2)
+        ;; Get the argument
         local.get $arguments
-        call $tail
         call $head
+
+        ;; Evaluate it
         local.get $environment
+        global.get $cons_cells_top
+        call $eval
+        local.tee $code
 
-        ;; Call the handler
-        local.get $arguments
-        call $head
-        i32.const 32
-        i32.add
-        call_indirect (type $system_operation_handler)
+        i32.eqz
+        (if (result i32)
+            (then
+                call $construct_system_operation_table
+            )
+            (else
+                ;; Construct a system receiver
+                ;; (this implementation represents these as (n . ~~sys))
+                local.get $code
+                i32.const 0x20_00_00_80 ;; ~~sys
+                call $cons
+            )
+        )
 
         ;; Run garbage collection
         local.get $gc_anchor
@@ -1438,7 +1494,7 @@
     ;; ---------- System Operation Registration ----------
 
     (type $system_operation_handler (func
-        (param $argument i32)
+        (param $arguments i32)
         (param $environment i32)
         (result i32)
     ))
@@ -1516,8 +1572,9 @@
         i32.store16 (memory $string_internment_stack)
     )
 
-    ;; (~~sys () ()) -- get mappings from system operation names to codes
-    (func $system_operation_zero (type $system_operation_handler)
+    ;; (~~sys ()) -- get mappings from system operation names to codes
+    (func $construct_system_operation_table
+        (result i32)
         (local $idx i32)
         (local $acc i32)
         (local $opcode i32)

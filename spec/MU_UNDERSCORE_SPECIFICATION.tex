@@ -17,7 +17,7 @@
 \setminted{escapeinside=@@}
 
 \newcommand\muu{\texttt{μ\!\!\!\_\_}}
-\newcommand\rev{\texttt{r0.2} }
+\newcommand\rev{\texttt{r0.3} }
 \newcommand{\intralink}[2]{\hyperref[#1]{\ref*{#1} #2}}
 
 \usepackage{fancyhdr}
@@ -45,7 +45,7 @@
 \label{sec:preface}
 
 mu\_ (stylized \muu) is an extremely simple programming language.
-This document contains a complete specification of the language followed by a series of appendicies elucidating motivation, design decisions, implementation strategies, and so on.
+This document contains a complete specification of the language followed by a series of appendices elucidating motivation, design decisions, implementation strategies, and so on.
 These appendices are not part of the formal language specification and in the event of a conflict between the specification and the content of an appendix the specification is authoritative.
 
 This is revision \rev of the specification.
@@ -85,6 +85,9 @@ This document will adopt such an interpretation when displaying mu\_ source.
 <rparen>   ::= 0x29 ;; RIGHT PARENTHESIS ')'
 <dot>      ::= 0x2e ;; FULL STOP         '.'
 
+<number>   ::= 0x23 ;; NUMBER SIGN       '#'
+<quote>    ::= 0x22 ;; QUOTATION MARK    '"'
+
 <tab>      ::= 0x09 ;; HORIZONTAL TAB    '\t'
 <lf>       ::= 0x0a ;; LINE FEED         '\n'
 <cr>       ::= 0x0d ;; CARRIAGE RETURN   '\r'
@@ -94,8 +97,11 @@ This document will adopt such an interpretation when displaying mu\_ source.
 
 <any>      ::= 0x20-0x7e ;; ALL PRINTABLE ASCII
 <special>  ::= <lparen> | <rparen> | <dot>
+             | <number> | <quote>
              | <tab> | <lf> | <cr> | <sp>
 \end{minted}
+
+The characters \mintinline{text}{#} and \mintinline{text}{"} are reserved.
 
 \subsubsection{Interpretation}
 \label{subsubsec:interpretation}
@@ -143,6 +149,7 @@ A few things to note about this algorithm:
 For this reason the $0$ atom is also called nil and is usually denoted \mintinline{lisp}{()}.
 \item A list like \mintinline{lisp}{(@$i_1$@ @$i_2$@ @$i_3$@)} denotes an ordinary linked list $i_1 \rightarrow i_2 \rightarrow i_3 \rightarrow \textbf{NIL}$.
 \item A dotted pair like \mintinline{lisp}{(@$l$@ . @$r$@)} denotes a simple cons cell $\left(l, r\right)$.
+\item A dotted list like \mintinline{lisp}{(@$i_1$@ @$i_2$@ @$i_3$@ . @$r$@)} denotes a modified linked list (with non-nil tail) $i_1 \rightarrow i_2 \rightarrow i_3 \rightarrow r$.
 \item An ordinary list like \mintinline{lisp}{(@$i_1$@ @$i_2$@ @$i_3$@ @$\cdots$@ @$i_n$@)} is equivalent to the dotted \mintinline{lisp}{(@$i_1$@ . (@$i_2$@ . (@$i_3$@ . (@$\cdots$@ (@$i_n$@ . ())))))}.
 \end{itemize}
 
@@ -362,21 +369,21 @@ Returns the bitwise negation (bitwise not) of the atom \\
 \\
 \mintinline{lisp}{(@$\langle$@~~not@$\rangle_{e}$@ @$\langle a \rangle_{e}$@)} $\xrightarrow{e} (\neg a)$
 
-\item [\mintinline{lisp}{~~sl}]
+\item [\mintinline{lisp}{~~shl}]
 Takes two arguments and evaluates them.
 They should both be atoms.
 The second argument should be less than $31$.
 Returns the first shifted left by the second number of bits. \\
 \\
-\mintinline{lisp}{(@$\langle$@~~sl@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a << b)$
+\mintinline{lisp}{(@$\langle$@~~shl@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a << b)$
 
-\item [\mintinline{lisp}{~~sr}]
+\item [\mintinline{lisp}{~~shr}]
 Takes two arguments and evaluates them.
 They should both be atoms.
 The second argument should be less than $31$.
 Returns the first shifted right by the second number of bits. \\
 \\
-\mintinline{lisp}{(@$\langle$@~~sr@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a >> b)$
+\mintinline{lisp}{(@$\langle$@~~shr@$\rangle_{e}$@ @$\langle a \rangle_{e}$@ @$\langle b \rangle_{e}$@)} $\xrightarrow{e} (a >> b)$
 
 \item [\mintinline{lisp}{~~env}]
 Takes no arguments.
@@ -385,12 +392,11 @@ Returns the environment. \\
 \mintinline{lisp}{(@$\langle$@~~env@$\rangle_{e}$@)} $\xrightarrow{e} e$
 
 \item [\mintinline{lisp}{~~sys}]
-Takes two arguments.
-DOES NOT evaluate them.
-Based on the value of the first argument perform a different implementation defined operation on the second argument.
+Takes one argument and evaluates it.
+Usually returns an implementation defined reciever based on its argument.
 See \intralink{subsubsec:system_builtin}{The \mintinline{lisp}{~~sys} Builtin} for a complete definition. \\
 \\
-\mintinline{lisp}{(@$\langle$@~~sys@$\rangle_{e}$@ @$sym$@ @$arg$@)} $\xrightarrow{e}$ See \intralink{subsubsec:system_builtin}{}
+\mintinline{lisp}{((@$\langle$@~~sys@$\rangle_{e}$@ @$sym$@) @$\cdots$@)} $\xrightarrow{e}$ See \intralink{subsubsec:system_builtin}{}
 \end{description}
 
 Each builtin takes a fixed number of arguments.
@@ -429,15 +435,15 @@ Attempting to use any cons-cell which does not form a valid list of either exact
 
 \mintinline{lisp}{~~sys} is the main point of extensibility built into \muu.
 
-Calling the \mintinline{lisp}{~~sys} with two $0$ atoms, e.g. \mintinline{lisp}{((() ~~sys) () ())}, should return a list of pairs mapping \emph{system operation names} to \emph{system operation codes}.\footnote{For a system which does not provide implementation specific functionality through this mechanism just return \mintinline{lisp}{()}.}
+Calling the \mintinline{lisp}{~~sys} with the $0$ atom, e.g. as \mintinline{lisp}{((() ~~sys) ())}, should return a list of pairs mapping \emph{system operation names} to \emph{system operation codes}.\footnote{For a system which does not provide implementation specific functionality through this mechanism just return \mintinline{lisp}{()}.}
 This mapping should remain constant throughout a program's lifetime.
 
 The heads of these pairs, the \emph{system operation names}, are atoms which correspond to human readable names of a sort a programmer may write in their source code.
 The tails, meanwhile, the \emph{system operation codes}, should also be atoms but which need not be human readable names.
 
-In order to call a system operation, the system operation code is used as the first argument to \mintinline{lisp}{~~sys} and the desired argument is used as the second argument.
-The code, argument, and calling environment are then handled in some implementation-specific way.
-Neither the code nor argument is evaluated prior to calling, but the system operation has all the information it needs to evaluate the argument if it wishes to.
+Calling \mintinline{lisp}{~~sys} with a system operation code should return a receiver which can be called to perform the desired system operation.
+The implementation may choose to represent this receiver using any \muu\ object except one of the builtin atoms or a list of one or two elements.
+The receivers may be, in general, macro like, performing a more complex transform on their arguments than simple evaluation.
 
 Using both a readable name and a code and delegating the mapping to the user's program this way allows for an extremely simple implementation of \mintinline{lisp}{~~sys} using a jump table or similar structure while still allowing readable names to be used to refer to these operations.
 

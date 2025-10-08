@@ -7,6 +7,13 @@ document.
 This document only tracks the specification itself, other parts of the mu\_
 project are only tracked where they affect the specification and its appendices.
 
+## `r0.3` --- 2025-10-08
+
+  * Rename shift builtins from `~~sl` and `~~sr` to `~~shl` and `~~shr`
+  * Substantially alter `~~sys`
+  * Minor grammar and spelling fixes
+  * Reserved the characters `#` and `"`
+
 ## `r0.2` --- 2025-09-24
 
   * Add reference implementation in WebAssembly as Appendix D

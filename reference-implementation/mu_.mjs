@@ -6,9 +6,10 @@
 // (C) 2025 Brielle Hoff --- Dual licensed under CC BY-NC 4.0 and MIT.
 
 // Magic to import the WebAssembly module in either Deno or on the web
+const module_url = URL.parse("./mu_.wasm", import.meta.url);
 const module = typeof Deno === "object"
-             ? await WebAssembly.compile(await Deno.readFile("./mu_.wasm"))
-             : await WebAssembly.compileStreaming(fetch("./mu_.wasm"));
+             ? await WebAssembly.compile(await Deno.readFile(module_url))
+             : await WebAssembly.compileStreaming(fetch(module_url));
 
 // You can't just pass Javascript functions to WebAssembly as funcrefs (no that
 // would be too easy) so you have to use this incredibly janky hack where you
